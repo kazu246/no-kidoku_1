@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>未返信リマインド</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --text: #1f2328;
+    --muted: #656d76;
+    --line: #d8dee4;
+    --orange: #c2620a;
+    --blue: #1f6feb;
+    --green: #1a7f37;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181d;
+      --text: #e6e8eb;
+      --muted: #9aa3ad;
+      --line: #2e333b;
+      --orange: #f0a04b;
+      --blue: #6ea8fe;
+      --green: #56d364;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px 16px 48px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif;
+    line-height: 1.6;
+  }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 20px; }
+  .counts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
+  .count { border-left: 4px solid var(--line); padding: 4px 0 4px 12px; }
+  .count strong { display: block; font-size: 28px; line-height: 1.2; }
+  .count span { font-size: 13px; color: var(--muted); }
+  .count.unreplied { border-color: var(--orange); }
+  .count.reminded { border-color: var(--blue); }
+  .count.replied { border-color: var(--green); }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 24px; }
+  button {
+    font: inherit; font-size: 14px; padding: 8px 14px; cursor: pointer;
+    color: var(--text); background: transparent;
+    border: 1px solid var(--line); border-radius: 6px;
+  }
+  button:hover { border-color: var(--muted); }
+  button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { border-top: 1px solid var(--line); padding: 12px 0; }
+  li:last-child { border-bottom: 1px solid var(--line); }
+  .meta { font-size: 13px; color: var(--muted); }
+  .body { margin: 2px 0 6px; word-break: break-word; }
+  .badge { font-size: 13px; font-weight: 600; }
+  .badge.waiting { color: var(--orange); }
+  .badge.reminded { color: var(--blue); }
+  .badge.replied { color: var(--green); }
+  .empty { color: var(--muted); padding: 24px 0; }
+  @media (max-width: 480px) { .count strong { font-size: 22px; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>未返信リマインド</h1>
+
+  <section class="counts" aria-label="件数">
+    <div class="count unreplied"><strong id="c-unreplied">0</strong><span>未返信（既読済み）</span></div>
+    <div class="count reminded"><strong id="c-reminded">0</strong><span>リマインド済み</span></div>
+    <div class="count replied"><strong id="c-replied">0</strong><span>返信完了</span></div>
+  </section>
+
+  <div class="actions">
+    <button id="btn-read" type="button">既読検知をシミュレート</button>
+    <button id="btn-reply" type="button">デモに返信する</button>
+  </div>
+
+  <ul id="list"></ul>
+  <p id="empty" class="empty" hidden>まだ既読を検知したメッセージはありません。</p>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const STATUS_LABEL = { waiting: "返信待ち", reminded: "リマインド済み", replied: "返信済み" };
+
+  function fmtDuration(sec) {
+    if (sec < 60) return sec + "秒";
+    const m = Math.floor(sec / 60);
+    if (m < 60) return m + "分";
+    return Math.floor(m / 60) + "時間" + (m % 60) + "分";
+  }
+
+  function render(items) {
+    const list = $("list");
+    list.replaceChildren();
+    $("empty").hidden = items.length > 0;
+
+    for (const m of items) {
+      const li = document.createElement("li");
+
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = m.room_name + " / " + m.sender;
+
+      const body = document.createElement("div");
+      body.className = "body";
+      body.textContent = m.body;
+
+      const badge = document.createElement("div");
+      badge.className = "badge " + m.status;
+      let text = STATUS_LABEL[m.status] || m.status;
+      if (m.status === "waiting") {
+        text += "（既読から" + fmtDuration(m.seconds_since_read) + "・あと" + fmtDuration(m.seconds_until_remind) + "でリマインド）";
+      } else {
+        text += "（既読から" + fmtDuration(m.seconds_since_read) + "）";
+      }
+      badge.textContent = text;
+
+      li.append(meta, body, badge);
+      list.append(li);
+    }
+  }
+
+  async function refresh() {
+    try {
+      const [s, m] = await Promise.all([
+        fetch("/api/status").then((r) => r.json()),
+        fetch("/api/messages").then((r) => r.json()),
+      ]);
+      $("c-unreplied").textContent = s.unreplied;
+      $("c-reminded").textContent = s.reminded;
+      $("c-replied").textContent = s.replied;
+      render(m);
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  $("btn-read").addEventListener("click", async () => {
+    await fetch("/api/simulate-read", { method: "POST" });
+    refresh();
+  });
+  $("btn-reply").addEventListener("click", async () => {
+    await fetch("/api/simulate-reply", { method: "POST" });
+    refresh();
+  });
+
+  refresh();
+  setInterval(refresh, 2000);
+</script>
+</body>
+</html>
